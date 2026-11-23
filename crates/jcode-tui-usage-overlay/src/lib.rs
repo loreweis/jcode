@@ -385,7 +385,9 @@ impl UsageOverlay {
 
     pub fn render(&self, frame: &mut Frame) {
         let frame_area = frame.area();
-        let area = if frame_area.width < 76 && frame_area.height > 14 {
+        let portrait_or_narrow = frame_area.width < 76
+            || (frame_area.height >= 28 && frame_area.width < frame_area.height.saturating_mul(2));
+        let area = if portrait_or_narrow && frame_area.height > 14 {
             centered_rect(96, 94, frame_area)
         } else {
             centered_rect(OVERLAY_PERCENT_X, OVERLAY_PERCENT_Y, frame_area)
@@ -424,7 +426,7 @@ impl UsageOverlay {
 
         self.render_header(frame, rows[0]);
 
-        let body = if rows[1].width < 74 {
+        let body = if portrait_or_narrow || rows[1].width < 74 {
             Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])

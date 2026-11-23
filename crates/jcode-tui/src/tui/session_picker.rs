@@ -2323,7 +2323,10 @@ impl SessionPicker {
 
         let main_area = v_chunks[chunk_idx];
 
-        if main_area.width < 76 {
+        let frame_area = frame.area();
+        let portrait_or_narrow = main_area.width < 76
+            || (frame_area.height >= 28 && frame_area.width < frame_area.height.saturating_mul(2));
+        if portrait_or_narrow {
             if main_area.height >= 16 {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)

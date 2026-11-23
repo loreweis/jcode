@@ -2953,9 +2953,17 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let diagram_focus = app.diagram_focus();
     let (diagram_scroll_x, diagram_scroll_y) = app.diagram_scroll();
 
-    // On narrow/portrait screens (< 76 cols), prefer vertical stacking instead of side-by-side splits.
+    // On narrow or portrait screens (terminal cells are ~2x taller than wide, so
+    // width < height * 2 catches portrait Termux screens like 80x47 or 86x50 while
+    // keeping desktop landscape screens like 80x24 / 120x40 unchanged), prefer
+    // vertical stacking instead of side-by-side horizontal splits.
     const NARROW_LAYOUT_WIDTH: u16 = 76;
-    let effective_pane_position = if area.width < NARROW_LAYOUT_WIDTH {
+    let is_portrait_or_narrow = |rect: Rect| -> bool {
+        rect.width < NARROW_LAYOUT_WIDTH
+            || (rect.height >= 28 && rect.width < rect.height.saturating_mul(2))
+    };
+    let portrait_layout = is_portrait_or_narrow(area);
+    let effective_pane_position = if portrait_layout {
         crate::config::DiagramPanePosition::Top
     } else {
         pane_position
@@ -3055,7 +3063,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
 
     let (chat_area, diff_pane_area) = if needs_side_pane {
         let effective_ratio = app.diagram_pane_ratio().clamp(25, 100) as u32;
-        if chat_area.width < NARROW_LAYOUT_WIDTH {
+        if is_portrait_or_narrow(chat_area) {
             // Portrait / narrow terminal: stack side panel vertically above chat.
             const MIN_SIDE_HEIGHT: u16 = 6;
             const MIN_CHAT_HEIGHT: u16 = 10;
@@ -3198,8 +3206,8 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let notification_height =
         input_ui::notification_height(app, chat_area.width).min(chat_area.height.saturating_sub(4));
     // Session status line (dir, branch, context, provider, model), always
-    // pinned directly below the input line. Stack into 2 lines on narrow screens.
-    let overscroll_height: u16 = if chat_area.width < NARROW_LAYOUT_WIDTH && chat_area.height >= 12 {
+    // pinned directly below the input line. Stack into 2 lines on narrow/portrait screens.
+    let overscroll_height: u16 = if is_portrait_or_narrow(chat_area) && chat_area.height >= 12 {
         2
     } else {
         1
@@ -3648,7 +3656,8 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let mut placements: Vec<info_widget::WidgetPlacement> = Vec::new();
     let widget_bounds = messages_area;
     if app.info_widget_overlays_enabled()
-        && widget_bounds.width >= NARROW_LAYOUT_WIDTH
+        && !portrait_layout
+        && !is_portrait_or_narrow(widget_bounds)
         && !widget_data.is_empty()
         && !show_donut
         && !swarm_page_active

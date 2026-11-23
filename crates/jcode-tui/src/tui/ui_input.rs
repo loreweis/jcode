@@ -1105,15 +1105,15 @@ pub(super) fn draw_overscroll_status(frame: &mut Frame, app: &dyn TuiState, area
             .map(str::to_string),
     };
 
-    let narrow = area.width < 76;
+    let stacked = area.height >= 2;
     let alignment = if app.centered_mode() {
         Alignment::Center
-    } else if narrow {
+    } else if stacked || area.width < 76 {
         Alignment::Left
     } else {
         Alignment::Right
     };
-    if narrow && area.height >= 2 {
+    if stacked {
         let top_facts = OverscrollFacts {
             machine: facts.machine.clone(),
             dir: facts.dir.clone(),
