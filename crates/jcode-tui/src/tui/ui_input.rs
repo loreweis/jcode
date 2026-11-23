@@ -318,7 +318,7 @@ pub(super) fn send_mode_reserved_width(app: &dyn TuiState) -> usize {
 
 pub(super) fn input_prompt(app: &dyn TuiState) -> (&'static str, Color) {
     if app.login_input_hint().is_some() {
-        return (" login> ", accent_color());
+        return ("login> ", accent_color());
     }
     let mode = composer_mode(app.input(), app.is_remote_mode());
     if mode.is_shell() {
@@ -332,9 +332,9 @@ pub(super) fn input_prompt(app: &dyn TuiState) -> (&'static str, Color) {
     }
 }
 
-pub(crate) fn input_prompt_len(app: &dyn TuiState, next_prompt: usize) -> usize {
+pub(crate) fn input_prompt_len(app: &dyn TuiState, _next_prompt: usize) -> usize {
     let (prompt_char, _) = input_prompt(app);
-    next_prompt.to_string().chars().count() + prompt_char.chars().count()
+    prompt_char.chars().count()
 }
 
 pub(crate) fn next_input_prompt_number(app: &dyn TuiState) -> usize {
@@ -1061,16 +1061,20 @@ pub(super) fn notification_height(app: &dyn TuiState, width: u16) -> u16 {
 }
 
 pub(super) fn draw_notification(frame: &mut Frame, app: &dyn TuiState, area: Rect) {
-    frame.render_widget(Paragraph::new(notification_lines(app, area.width)), area);
+    let inset = if app.centered_mode() || area.width <= 2 { 0 } else { 2 };
+    let draw_area = Rect {
+        x: area.x.saturating_add(inset),
+        y: area.y,
+        width: area.width.saturating_sub(inset),
+        height: area.height,
+    };
+    frame.render_widget(Paragraph::new(notification_lines(app, draw_area.width)), draw_area);
 }
 
 /// Draw the session status line, pinned directly below the input. Shows the
 /// directory, branch, git status, context usage, access method, provider, and
 /// model, compacting facts step by step as the terminal narrows.
-pub(super) fn draw_overscroll_status(frame: &mut Frame, app: &dyn TuiState, area: Rect) {
-    if area.height == 0 || area.width == 0 {
-        return;
-    }
+fn build_overscroll_facts(app: &dyn TuiState) -> OverscrollFacts {
     let data = app.info_widget_data();
 
     let model = data
@@ -1083,7 +1087,7 @@ pub(super) fn draw_overscroll_status(frame: &mut Frame, app: &dyn TuiState, area
         .clone()
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| app.provider_name());
-    let facts = OverscrollFacts {
+    OverscrollFacts {
         machine: app.remote_machine(),
         dir: overscroll_directory_transition(
             data.original_working_dir.as_deref(),
@@ -1103,62 +1107,133 @@ pub(super) fn draw_overscroll_status(frame: &mut Frame, app: &dyn TuiState, area
             .as_deref()
             .and_then(overscroll_short_reasoning)
             .map(str::to_string),
-    };
+    }
+}
 
-    let stacked = area.height >= 2;
+fn overscroll_indent_width(app: &dyn TuiState) -> usize {
+    input_prompt(app).0.chars().count()
+}
+
+fn overscroll_full_width(facts: &OverscrollFacts) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    let groups = overscroll_fact_spans(facts, OverscrollLevels::default());
+    let mut total = 0usize;
+    for (idx, group) in groups.iter().enumerate() {
+        if idx > 0 {
+            total += 1;
+        }
+        total += group.iter().map(|s| s.content.width()).sum::<usize>();
+    }
+    total
+}
+
+pub(super) fn overscroll_status_height(app: &dyn TuiState, area_width: u16, area_height: u16) -> u16 {
+    if area_width == 0 {
+        return 1;
+    }
+    if area_height < 12 {
+        return 1;
+    }
+    // Reserve 1 blank line directly below `> user_prompt` plus 1-2 status lines.
+    let facts = build_overscroll_facts(app);
+    let indent = overscroll_indent_width(app);
+    let status_rows = if indent + overscroll_full_width(&facts) <= area_width as usize {
+        1
+    } else {
+        2
+    };
+    1 + status_rows
+}
+
+pub(super) fn draw_overscroll_status(frame: &mut Frame, app: &dyn TuiState, area: Rect) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    // Leave 1 blank separator row at the top when we have >= 2 rows allocated.
+    let (status_area, has_top_gap) = if area.height >= 2 {
+        (
+            Rect {
+                x: area.x,
+                y: area.y.saturating_add(1),
+                width: area.width,
+                height: area.height.saturating_sub(1),
+            },
+            true,
+        )
+    } else {
+        (area, false)
+    };
+    let _ = has_top_gap;
+    let facts = build_overscroll_facts(app);
+    let indent_len = overscroll_indent_width(app).min(status_area.width as usize);
+    let indent = " ".repeat(indent_len);
+    let content_width = (status_area.width as usize).saturating_sub(indent_len);
+    if content_width == 0 {
+        return;
+    }
     let alignment = if app.centered_mode() {
         Alignment::Center
-    } else if stacked || area.width < 76 {
-        Alignment::Left
     } else {
-        Alignment::Right
+        Alignment::Left
     };
-    if stacked {
-        let top_facts = OverscrollFacts {
-            machine: facts.machine.clone(),
-            dir: facts.dir.clone(),
-            branch: facts.branch.clone(),
-            git: facts.git.clone(),
-            context: facts.context,
-            account_remaining: facts.account_remaining,
-            auth: None,
-            provider: None,
-            model: None,
-            effort: None,
-        };
-        let bottom_facts = OverscrollFacts {
+
+    let fits_single_line = overscroll_full_width(&facts) <= content_width;
+    if status_area.height >= 2 && !fits_single_line {
+        let model_facts = OverscrollFacts {
             machine: None,
             dir: None,
             branch: None,
             git: None,
             context: None,
-            account_remaining: None,
+            account_remaining: facts.account_remaining,
             auth: facts.auth,
             provider: facts.provider.clone(),
             model: facts.model.clone(),
             effort: facts.effort.clone(),
         };
+        let env_facts = OverscrollFacts {
+            machine: facts.machine.clone(),
+            dir: facts.dir.clone(),
+            branch: facts.branch.clone(),
+            git: facts.git.clone(),
+            context: facts.context,
+            account_remaining: None,
+            auth: None,
+            provider: None,
+            model: None,
+            effort: None,
+        };
         let mut lines = Vec::new();
-        let (top_spans, _) = overscroll_fit_facts(&top_facts, area.width as usize);
+        let (mut top_spans, _) = overscroll_fit_facts(&model_facts, content_width);
         if !top_spans.is_empty() {
+            if !app.centered_mode() && !indent.is_empty() {
+                top_spans.insert(0, Span::raw(indent.clone()));
+            }
             lines.push(Line::from(top_spans).alignment(alignment));
         }
-        let (bottom_spans, _) = overscroll_fit_facts(&bottom_facts, area.width as usize);
+        let (mut bottom_spans, _) = overscroll_fit_facts(&env_facts, content_width);
         if !bottom_spans.is_empty() {
+            if !app.centered_mode() && !indent.is_empty() {
+                bottom_spans.insert(0, Span::raw(indent.clone()));
+            }
             lines.push(Line::from(bottom_spans).alignment(alignment));
         }
         if lines.is_empty() {
             return;
         }
-        frame.render_widget(Paragraph::new(lines), area);
+        frame.render_widget(Paragraph::new(lines), status_area);
         return;
     }
-    let (spans, _) = overscroll_fit_facts(&facts, area.width as usize);
+
+    let (mut spans, _) = overscroll_fit_facts(&facts, content_width);
     if spans.is_empty() {
         return;
     }
+    if !app.centered_mode() && !indent.is_empty() {
+        spans.insert(0, Span::raw(indent));
+    }
     let line = Line::from(spans).alignment(alignment);
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(Paragraph::new(line), status_area);
 }
 
 /// Render only the supplied session facts. Unlike the live adapter this never
@@ -1248,7 +1323,6 @@ struct OverscrollLevels {
     git: u8,
     context: u8,
     account_bar: u8,
-    context_bar: u8,
     auth: u8,
     provider: u8,
     model: u8,
@@ -1263,7 +1337,6 @@ struct OverscrollLevels {
 /// how full is the context".
 const OVERSCROLL_LADDER: &[fn(&mut OverscrollLevels)] = &[
     |l| l.account_bar = 1, // drop account bar before shortening other facts
-    |l| l.context_bar = 1, // keep token counts when the context bar cannot fit
     |l| l.auth = 1,        // hide auth ("OAuth"/"API key")
     |l| l.git = 1,         // "~3 +1 ?2 ↑1" -> "±6 ↑1"
     |l| l.branch = 1,      // long branch -> 12 chars
@@ -1300,70 +1373,6 @@ fn overscroll_fact_spans(
         }
         spans
     };
-
-    if let Some(dir) = &facts.dir {
-        let label = if levels.dir == 0 {
-            dir.clone()
-        } else {
-            dir.split(" → ")
-                .map(|path| path.rsplit('/').find(|seg| !seg.is_empty()).unwrap_or(path))
-                .collect::<Vec<_>>()
-                .join(" → ")
-        };
-        let mut group = machine_spans(levels);
-        if group.is_empty() {
-            group.push(Span::styled(" ", Style::default().fg(rgb(140, 180, 255))));
-        }
-        group.push(Span::styled(label, muted));
-        out.push(group);
-    } else if facts.machine.is_some() {
-        out.push(machine_spans(levels));
-    }
-
-    if let Some(branch) = &facts.branch {
-        let label = match levels.branch {
-            0 => Some(branch.clone()),
-            1 => Some(overscroll_truncate_label(branch, 12)),
-            _ => None,
-        };
-        if let Some(label) = label {
-            out.push(vec![Span::styled(
-                format!(" {label}"),
-                Style::default().fg(rgb(150, 170, 140)),
-            )]);
-        }
-    }
-
-    if let Some(git) = &facts.git
-        && let Some(spans) = overscroll_git_status_spans(git, levels.git)
-    {
-        out.push(spans);
-    }
-
-    if let Some((used, limit)) = facts.context {
-        let mut spans = Vec::new();
-        if levels.context == 0 {
-            spans.push(Span::styled(
-                format!(
-                    "{}/{} ",
-                    overscroll_format_tokens(used),
-                    overscroll_format_tokens(limit)
-                ),
-                muted,
-            ));
-        }
-        if levels.context == 0 && levels.context_bar == 0 {
-            let pct = ((used as f64 / limit.max(1) as f64).clamp(0.0, 1.0) * 100.0).round() as u8;
-            spans.extend(crate::tui::info_widget::render_inline_limit_bar(
-                100 - pct,
-                4,
-                true,
-            ));
-        } else {
-            spans.push(overscroll_context_percentage(used, limit));
-        }
-        out.push(spans);
-    }
 
     if levels.auth == 0
         && let Some((label, color)) = facts.auth
@@ -1402,6 +1411,61 @@ fn overscroll_fact_spans(
             group.push(Span::styled(format!(" {effort}"), muted));
         }
         out.push(group);
+    }
+
+    if let Some(dir) = &facts.dir {
+        let label = if levels.dir == 0 {
+            dir.clone()
+        } else {
+            dir.split(" → ")
+                .map(|path| path.rsplit('/').find(|seg| !seg.is_empty()).unwrap_or(path))
+                .collect::<Vec<_>>()
+                .join(" → ")
+        };
+        let mut group = machine_spans(levels);
+        group.push(Span::styled(label, muted));
+        out.push(group);
+    } else if facts.machine.is_some() {
+        out.push(machine_spans(levels));
+    }
+
+    if let Some(branch) = &facts.branch {
+        let label = match levels.branch {
+            0 => Some(branch.clone()),
+            1 => Some(overscroll_truncate_label(branch, 12)),
+            _ => None,
+        };
+        if let Some(label) = label {
+            out.push(vec![Span::styled(
+                label,
+                Style::default().fg(rgb(150, 170, 140)),
+            )]);
+        }
+    }
+
+    if let Some(git) = &facts.git
+        && let Some(spans) = overscroll_git_status_spans(git, levels.git)
+    {
+        out.push(spans);
+    }
+
+    if let Some((used, limit)) = facts.context {
+        let mut spans = Vec::new();
+        if levels.context == 0 {
+            spans.push(Span::styled(
+                format!(
+                    "{}/{} (",
+                    overscroll_format_tokens(used),
+                    overscroll_format_tokens(limit)
+                ),
+                muted,
+            ));
+            spans.push(overscroll_context_percentage(used, limit));
+            spans.push(Span::styled(")", muted));
+        } else {
+            spans.push(overscroll_context_percentage(used, limit));
+        }
+        out.push(spans);
     }
 
     out
@@ -2130,12 +2194,12 @@ fn wrap_input_text_with_ghost<'a>(
             found_cursor = true;
         }
 
+        let _ = num_str;
         let mut spans = if idx == 0 {
-            let num_color = rainbow_prompt_color(0);
-            vec![
-                Span::styled(num_str.to_string(), Style::default().fg(num_color)),
-                Span::styled(prompt_char.to_string(), Style::default().fg(caret_color)),
-            ]
+            vec![Span::styled(
+                prompt_char.to_string(),
+                Style::default().fg(caret_color),
+            )]
         } else {
             vec![Span::raw(" ".repeat(prompt_len))]
         };

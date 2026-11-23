@@ -199,8 +199,8 @@ fn push_user_prompt_lines(
     content: &str,
     align: ratatui::layout::Alignment,
 ) {
-    let prefix_width = unicode_width::UnicodeWidthStr::width(prompt_num.to_string().as_str())
-        + unicode_width::UnicodeWidthStr::width("› ");
+    let num_str = prompt_num.to_string();
+    let prefix_width = unicode_width::UnicodeWidthStr::width(num_str.as_str()) + 3;
     // Callers supply already projected user-facing content.
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     for (line_idx, content_line) in normalized.split('\n').enumerate() {
@@ -215,11 +215,9 @@ fn push_user_prompt_lines(
 
         let prefix_spans = if is_first_line {
             vec![
-                Span::styled(
-                    format!("{}", prompt_num),
-                    user_prompt_number_style(num_color),
-                ),
-                Span::styled("› ", user_prompt_accent_style()),
+                Span::styled("(", user_prompt_accent_style()),
+                Span::styled(num_str.clone(), user_prompt_number_style(num_color)),
+                Span::styled(") ", user_prompt_accent_style()),
             ]
         } else {
             vec![Span::styled(

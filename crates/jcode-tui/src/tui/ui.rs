@@ -621,6 +621,13 @@ mod status_support;
 mod theme_support;
 use super::color_support::rgb;
 pub(crate) use layout_support::{align_if_unset, left_aligned_content_inset};
+
+/// Left inset for non-centered transcript content so responses, headers, tools,
+/// and notices align directly under `u` in `> user_prompt` (column 2), while
+/// history user prompts `(1) hi` flush-align `(` with `>` (column 0).
+pub(super) fn chat_content_left_inset(width: u16, centered: bool) -> u16 {
+    if centered || width <= 2 { 0 } else { 2 }
+}
 use layout_support::{
     centered_content_block_width, clear_area, draw_right_rail_chrome,
     left_pad_lines_to_block_width, right_rail_border_style,
@@ -3142,14 +3149,22 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let blocker_height = blocker_lines
         .len()
         .min(usize::from(chat_area.height.saturating_sub(6))) as u16;
-    let inline_ui_gap_height: u16 = blocker_height.max(if inline_block_height > 0 { 1 } else { 0 });
+    let notification_height_preview =
+        input_ui::notification_height(app, chat_area.width).min(chat_area.height.saturating_sub(4));
+    let inline_ui_gap_height: u16 = blocker_height.max(
+        if inline_block_height > 0 || notification_height_preview > 0 || app.is_processing() {
+            1
+        } else {
+            0
+        },
+    );
     let input_height = base_input_height + hint_line_height;
 
     if let Some(ref mut capture) = debug_capture {
         capture.render_order.push("prepare_messages".to_string());
     }
     let prep_start = Instant::now();
-    let chat_left_inset = left_aligned_content_inset(chat_area.width, app.centered_mode());
+    let chat_left_inset = chat_content_left_inset(chat_area.width, app.centered_mode());
     let wide_prepare_width = chat_area.width.saturating_sub(chat_left_inset);
     let narrow_prepare_width = wide_prepare_width.saturating_sub(1);
     let pinned_mermaid_aspect_ratio =
@@ -3205,13 +3220,10 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let donut_height: u16 = idle_donut_reserved_height(show_donut, input_height);
     let notification_height =
         input_ui::notification_height(app, chat_area.width).min(chat_area.height.saturating_sub(4));
-    // Session status line (dir, branch, context, provider, model), always
-    // pinned directly below the input line. Stack into 2 lines on narrow/portrait screens.
-    let overscroll_height: u16 = if is_portrait_or_narrow(chat_area) && chat_area.height >= 12 {
-        2
-    } else {
-        1
-    };
+    // Session status line (provider, model, dir, branch, context), always
+    // pinned directly below the input line. Uses 1 row when it fits, 2 rows when wrapping.
+    let overscroll_height: u16 =
+        input_ui::overscroll_status_height(app, chat_area.width, chat_area.height);
     let fixed_height = 1
         + queued_height
         + notification_height
@@ -3302,7 +3314,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
         let width = chat_area
             .width
             .saturating_sub(u16::from(chat_scrollbar_visible));
-        let width = width.saturating_sub(left_aligned_content_inset(width, app.centered_mode()));
+        let width = width.saturating_sub(chat_content_left_inset(width, app.centered_mode()));
         viewport::pinned_todo_band_lines(app, width, available_height.saturating_sub(fixed_height))
             .0
             .len()

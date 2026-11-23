@@ -312,7 +312,14 @@ pub(in super::super) fn draw_status(
         frame.render_widget(Paragraph::new(line.alignment(Alignment::Center)), area);
         return;
     }
-    frame.render_widget(Paragraph::new(line), area);
+    let inset = if area.width <= 2 { 0 } else { 2 };
+    let draw_area = Rect {
+        x: area.x.saturating_add(inset),
+        y: area.y,
+        width: area.width.saturating_sub(inset),
+        height: area.height,
+    };
+    frame.render_widget(Paragraph::new(line), draw_area);
 }
 
 /// Mask an API key being typed or pasted into the login composer while

@@ -254,7 +254,7 @@ pub(super) fn draw_messages(
 ) -> (info_widget::Margins, Option<super::NativeScrollbar>) {
     let (render_area, scrollbar_area) =
         super::split_native_scrollbar_area(area, show_native_scrollbar);
-    let left_inset = super::left_aligned_content_inset(render_area.width, app.centered_mode());
+    let left_inset = super::chat_content_left_inset(render_area.width, app.centered_mode());
     let text_render_area = Rect {
         x: render_area.x.saturating_add(left_inset),
         y: render_area.y,
@@ -895,7 +895,39 @@ pub(super) fn draw_messages(
         }
     }
 
+    let mut flush_left_user_rows: Vec<(usize, Line<'static>)> = Vec::new();
+    if !app.centered_mode() && left_inset > 0 && !prepared.wrapped_user_prompt_starts.is_empty() {
+        for (rel_idx, line) in visible_lines.iter_mut().enumerate() {
+            let abs_idx = scroll + rel_idx;
+            let idx = prepared
+                .wrapped_user_prompt_starts
+                .partition_point(|start| *start <= abs_idx);
+            let is_user_row = idx > 0
+                && prepared
+                    .wrapped_user_prompt_ends
+                    .get(idx - 1)
+                    .is_some_and(|end| abs_idx < *end);
+            if is_user_row {
+                let owned = std::mem::take(line);
+                flush_left_user_rows.push((rel_idx, owned));
+            }
+        }
+    }
+
     frame.render_widget(Paragraph::new(visible_lines), content_area);
+
+    for (rel_idx, user_line) in flush_left_user_rows {
+        let row_y = content_area.y.saturating_add(rel_idx as u16);
+        if row_y < content_area.bottom() {
+            let row_area = Rect {
+                x: render_area.x,
+                y: row_y,
+                width: render_area.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(user_line), row_area);
+        }
+    }
 
     let centered = app.centered_mode();
     let diagram_mode = app.diagram_mode();
@@ -1188,8 +1220,9 @@ pub(super) fn draw_messages(
                 .into_iter()
                 .map(|(num, text)| {
                     let mut line = Line::from(vec![
+                        Span::styled("(", dim_style.fg(user_color()).bg(user_bg())),
                         Span::styled(num, dim_style.fg(dim_color()).bg(user_bg())),
-                        Span::styled("› ", dim_style.fg(user_color()).bg(user_bg())),
+                        Span::styled(") ", dim_style.fg(user_color()).bg(user_bg())),
                         Span::styled(text, dim_style.fg(user_text()).bg(user_bg())),
                     ]);
                     if line.width() > width {

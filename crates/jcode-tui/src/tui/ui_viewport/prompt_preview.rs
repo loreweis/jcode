@@ -60,7 +60,7 @@ fn prompt_preview_lines_uncached(
         return Vec::new();
     }
     let number = number.to_string();
-    let prefix = number.len() + 2;
+    let prefix = number.len() + 3;
     let content_width = usize::from(width).saturating_sub(prefix + 2);
     let style = Style::default().dim().bg(user_bg());
     let mut lines = Vec::with_capacity(2);
@@ -96,8 +96,9 @@ fn prompt_preview_lines_uncached(
     };
     lines.push(
         Line::from(vec![
+            Span::styled("(", style.fg(user_color())),
             Span::styled(number, style.fg(dim_color())),
-            Span::styled("› ", style.fg(user_color())),
+            Span::styled(") ", style.fg(user_color())),
             Span::styled(head, style.fg(user_text())),
         ])
         .alignment(align),
