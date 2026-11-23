@@ -2323,17 +2323,34 @@ impl SessionPicker {
 
         let main_area = v_chunks[chunk_idx];
 
-        // Keep the transcript on the left and the session sidebar on the right.
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(main_area);
+        if main_area.width < 76 {
+            if main_area.height >= 16 {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                    .split(main_area);
+                self.last_list_area = Some(chunks[0]);
+                self.last_preview_area = Some(chunks[1]);
+                self.render_session_list(frame, chunks[0]);
+                self.render_preview(frame, chunks[1]);
+            } else {
+                self.last_list_area = Some(main_area);
+                self.last_preview_area = None;
+                self.render_session_list(frame, main_area);
+            }
+        } else {
+            // Keep the transcript on the left and the session sidebar on the right.
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(main_area);
 
-        self.last_list_area = Some(chunks[1]);
-        self.last_preview_area = Some(chunks[0]);
+            self.last_list_area = Some(chunks[1]);
+            self.last_preview_area = Some(chunks[0]);
 
-        self.render_session_list(frame, chunks[1]);
-        self.render_preview(frame, chunks[0]);
+            self.render_session_list(frame, chunks[1]);
+            self.render_preview(frame, chunks[0]);
+        }
         self.render_claude_takeover_confirmation(frame);
     }
 

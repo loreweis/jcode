@@ -2953,9 +2953,17 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let diagram_focus = app.diagram_focus();
     let (diagram_scroll_x, diagram_scroll_y) = app.diagram_scroll();
 
+    // On narrow/portrait screens (< 76 cols), prefer vertical stacking instead of side-by-side splits.
+    const NARROW_LAYOUT_WIDTH: u16 = 76;
+    let effective_pane_position = if area.width < NARROW_LAYOUT_WIDTH {
+        crate::config::DiagramPanePosition::Top
+    } else {
+        pane_position
+    };
+
     // Compute layout depending on pane position (Side = right column, Top = above chat).
     let (chat_area, diagram_area) = if let Some(diagram) = pinned_diagram.as_ref() {
-        match pane_position {
+        match effective_pane_position {
             crate::config::DiagramPanePosition::Side => {
                 const MIN_DIAGRAM_WIDTH: u16 = 24;
                 const MIN_CHAT_WIDTH: u16 = 20;
@@ -3046,30 +3054,59 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let needs_side_pane = has_right_side_pane_content && !side_panel_fullscreen;
 
     let (chat_area, diff_pane_area) = if needs_side_pane {
-        const MIN_DIFF_WIDTH: u16 = 30;
-        const MIN_CHAT_WIDTH: u16 = 20;
         let effective_ratio = app.diagram_pane_ratio().clamp(25, 100) as u32;
-        let max_diff = chat_area.width.saturating_sub(MIN_CHAT_WIDTH);
-        if max_diff >= MIN_DIFF_WIDTH {
-            let diff_width = (((chat_area.width as u32 * effective_ratio) / 100) as u16)
-                .max(MIN_DIFF_WIDTH)
-                .min(max_diff);
-            let new_chat_width = chat_area.width.saturating_sub(diff_width);
-            let chat = Rect {
-                x: chat_area.x,
-                y: chat_area.y,
-                width: new_chat_width,
-                height: chat_area.height,
-            };
-            let diff = Rect {
-                x: chat_area.x + new_chat_width,
-                y: chat_area.y,
-                width: diff_width,
-                height: chat_area.height,
-            };
-            (chat, Some(diff))
+        if chat_area.width < NARROW_LAYOUT_WIDTH {
+            // Portrait / narrow terminal: stack side panel vertically above chat.
+            const MIN_SIDE_HEIGHT: u16 = 6;
+            const MIN_CHAT_HEIGHT: u16 = 10;
+            let max_side_height = chat_area.height.saturating_sub(MIN_CHAT_HEIGHT);
+            if max_side_height >= MIN_SIDE_HEIGHT {
+                let side_ratio = effective_ratio.clamp(25, 60);
+                let side_height = (((chat_area.height as u32 * side_ratio) / 100) as u16)
+                    .max(MIN_SIDE_HEIGHT)
+                    .min(max_side_height);
+                let new_chat_height = chat_area.height.saturating_sub(side_height);
+                let diff = Rect {
+                    x: chat_area.x,
+                    y: chat_area.y,
+                    width: chat_area.width,
+                    height: side_height,
+                };
+                let chat = Rect {
+                    x: chat_area.x,
+                    y: chat_area.y + side_height,
+                    width: chat_area.width,
+                    height: new_chat_height,
+                };
+                (chat, Some(diff))
+            } else {
+                (chat_area, None)
+            }
         } else {
-            (chat_area, None)
+            const MIN_DIFF_WIDTH: u16 = 30;
+            const MIN_CHAT_WIDTH: u16 = 20;
+            let max_diff = chat_area.width.saturating_sub(MIN_CHAT_WIDTH);
+            if max_diff >= MIN_DIFF_WIDTH {
+                let diff_width = (((chat_area.width as u32 * effective_ratio) / 100) as u16)
+                    .max(MIN_DIFF_WIDTH)
+                    .min(max_diff);
+                let new_chat_width = chat_area.width.saturating_sub(diff_width);
+                let chat = Rect {
+                    x: chat_area.x,
+                    y: chat_area.y,
+                    width: new_chat_width,
+                    height: chat_area.height,
+                };
+                let diff = Rect {
+                    x: chat_area.x + new_chat_width,
+                    y: chat_area.y,
+                    width: diff_width,
+                    height: chat_area.height,
+                };
+                (chat, Some(diff))
+            } else {
+                (chat_area, None)
+            }
         }
     } else {
         (chat_area, None)
@@ -3108,7 +3145,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let wide_prepare_width = chat_area.width.saturating_sub(chat_left_inset);
     let narrow_prepare_width = wide_prepare_width.saturating_sub(1);
     let pinned_mermaid_aspect_ratio =
-        diagram_area.and_then(|area| pinned_diagram_preferred_aspect_ratio(area, pane_position));
+        diagram_area.and_then(|area| pinned_diagram_preferred_aspect_ratio(area, effective_pane_position));
     let aspect_start = Instant::now();
     // Aspect-ratio goal for transcript mermaid renders (deferred and
     // synchronous): the pinned pane's aspect wins when the pane is open so
@@ -3161,8 +3198,12 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let notification_height =
         input_ui::notification_height(app, chat_area.width).min(chat_area.height.saturating_sub(4));
     // Session status line (dir, branch, context, provider, model), always
-    // pinned directly below the input line.
-    let overscroll_height: u16 = 1;
+    // pinned directly below the input line. Stack into 2 lines on narrow screens.
+    let overscroll_height: u16 = if chat_area.width < NARROW_LAYOUT_WIDTH && chat_area.height >= 12 {
+        2
+    } else {
+        1
+    };
     let fixed_height = 1
         + queued_height
         + notification_height
@@ -3513,7 +3554,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
             diagram_scroll_x,
             diagram_scroll_y,
             app.diagram_zoom(),
-            pane_position,
+            effective_pane_position,
             app.diagram_pane_animating(),
         );
     }
@@ -3607,6 +3648,7 @@ fn draw_inner(frame: &mut Frame, app: &dyn TuiState) {
     let mut placements: Vec<info_widget::WidgetPlacement> = Vec::new();
     let widget_bounds = messages_area;
     if app.info_widget_overlays_enabled()
+        && widget_bounds.width >= NARROW_LAYOUT_WIDTH
         && !widget_data.is_empty()
         && !show_donut
         && !swarm_page_active

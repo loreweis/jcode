@@ -12,28 +12,106 @@ mod account_router;
 
 /// UI chrome is single-line. Budget the same trailing cell as the transcript
 /// preparer so even an exactly-full header cannot acquire a continuation row.
+fn wrap_narrow_header_line(line: Line<'static>, budget: usize) -> Vec<Line<'static>> {
+    use unicode_width::UnicodeWidthStr;
+    if budget == 0 || line.width() <= budget {
+        return vec![line];
+    }
+    let style = line.style;
+    let alignment = line.alignment;
+
+    // Split styled spans into segments separated by " · ".
+    let mut segments: Vec<Vec<Span<'static>>> = vec![Vec::new()];
+    for span in line.spans {
+        let span_style = span.style;
+        let text = span.content.into_owned();
+        let mut parts = text.split(" · ").peekable();
+        while let Some(part) = parts.next() {
+            let trimmed = part.trim();
+            if !trimmed.is_empty() {
+                segments
+                    .last_mut()
+                    .unwrap()
+                    .push(Span::styled(trimmed.to_string(), span_style));
+            }
+            if parts.peek().is_some() {
+                segments.push(Vec::new());
+            }
+        }
+    }
+    segments.retain(|seg| !seg.is_empty());
+
+    let seg_width = |seg: &[Span<'static>]| -> usize {
+        seg.iter().map(|s| s.content.width()).sum()
+    };
+
+    if segments.len() <= 1 {
+        let mut fitted = jcode_tui_render::truncate_line_with_ellipsis_to_width(&Line::from(segments.into_iter().flatten().collect::<Vec<_>>()), budget);
+        fitted.style = style;
+        fitted.alignment = alignment;
+        return vec![fitted];
+    }
+
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut current: Vec<Span<'static>> = Vec::new();
+    let mut current_w: usize = 0;
+
+    for seg in segments {
+        let sw = seg_width(&seg);
+        let sep_w = if current.is_empty() { 0 } else { 3 };
+        if !current.is_empty() && current_w + sep_w + sw > budget {
+            let mut built = jcode_tui_render::truncate_line_with_ellipsis_to_width(&Line::from(current), budget);
+            built.style = style;
+            built.alignment = alignment;
+            out.push(built);
+            current = vec![Span::styled("  ", Style::default().fg(dim_color()))];
+            current_w = 2;
+            current.extend(seg);
+            current_w += sw;
+        } else {
+            if !current.is_empty() {
+                current.push(Span::styled(" · ", Style::default().fg(dim_color())));
+                current_w += 3;
+            }
+            current.extend(seg);
+            current_w += sw;
+        }
+    }
+    if !current.is_empty() {
+        let mut built = jcode_tui_render::truncate_line_with_ellipsis_to_width(&Line::from(current), budget);
+        built.style = style;
+        built.alignment = alignment;
+        out.push(built);
+    }
+    out
+}
+
 fn fit_header_lines(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
     let budget = usize::from(width.saturating_sub(1));
-    lines
-        .into_iter()
-        .map(|mut line| {
-            for span in &mut line.spans {
-                if span.content.chars().any(char::is_control) {
-                    span.content = span
-                        .content
-                        .chars()
-                        .map(|c| if c.is_control() { ' ' } else { c })
-                        .collect::<String>()
-                        .into();
-                }
+    let narrow = width < 76;
+    let mut out = Vec::with_capacity(lines.len());
+    for mut line in lines {
+        for span in &mut line.spans {
+            if span.content.chars().any(char::is_control) {
+                span.content = span
+                    .content
+                    .chars()
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect::<String>()
+                    .into();
             }
-            line = account_router::fit_account_row(line, budget);
+        }
+        line = account_router::fit_account_row(line, budget);
+        if narrow && line.width() > budget {
+            out.extend(wrap_narrow_header_line(line, budget));
+        } else {
             let mut fitted = jcode_tui_render::truncate_line_with_ellipsis_to_width(&line, budget);
             fitted.style = line.style;
             fitted.alignment = line.alignment;
-            fitted
-        })
-        .collect()
+            out.push(fitted);
+        }
+    }
+    out
 }
 
 fn product_header_line(is_canary: bool, status_items: &[&str]) -> Line<'static> {

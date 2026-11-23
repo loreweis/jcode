@@ -1105,11 +1105,54 @@ pub(super) fn draw_overscroll_status(frame: &mut Frame, app: &dyn TuiState, area
             .map(str::to_string),
     };
 
+    let narrow = area.width < 76;
     let alignment = if app.centered_mode() {
         Alignment::Center
+    } else if narrow {
+        Alignment::Left
     } else {
         Alignment::Right
     };
+    if narrow && area.height >= 2 {
+        let top_facts = OverscrollFacts {
+            machine: facts.machine.clone(),
+            dir: facts.dir.clone(),
+            branch: facts.branch.clone(),
+            git: facts.git.clone(),
+            context: facts.context,
+            account_remaining: facts.account_remaining,
+            auth: None,
+            provider: None,
+            model: None,
+            effort: None,
+        };
+        let bottom_facts = OverscrollFacts {
+            machine: None,
+            dir: None,
+            branch: None,
+            git: None,
+            context: None,
+            account_remaining: None,
+            auth: facts.auth,
+            provider: facts.provider.clone(),
+            model: facts.model.clone(),
+            effort: facts.effort.clone(),
+        };
+        let mut lines = Vec::new();
+        let (top_spans, _) = overscroll_fit_facts(&top_facts, area.width as usize);
+        if !top_spans.is_empty() {
+            lines.push(Line::from(top_spans).alignment(alignment));
+        }
+        let (bottom_spans, _) = overscroll_fit_facts(&bottom_facts, area.width as usize);
+        if !bottom_spans.is_empty() {
+            lines.push(Line::from(bottom_spans).alignment(alignment));
+        }
+        if lines.is_empty() {
+            return;
+        }
+        frame.render_widget(Paragraph::new(lines), area);
+        return;
+    }
     let (spans, _) = overscroll_fit_facts(&facts, area.width as usize);
     if spans.is_empty() {
         return;

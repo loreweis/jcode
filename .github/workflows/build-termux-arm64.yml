@@ -1,0 +1,78 @@
+name: Build Termux ARM64 (Responsive UI)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [mobile-ui]
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    name: Build jcode (linux-aarch64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: termux-arm64-mobile-ui
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang mold pkg-config
+
+      - name: Configure mold linker
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml << 'CARGO_EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "clang"
+          rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+          CARGO_EOF
+
+      - name: Run modified TUI crate tests
+        run: |
+          cargo test --locked -p jcode-tui-account-picker -p jcode-tui-usage-overlay --lib
+          cargo test --locked -p jcode-tui --lib login_picker
+
+      - name: Build release binary (jcode)
+        run: cargo build --locked --release --bin jcode
+
+      - name: Package & verify binary
+        run: |
+          mkdir -p dist
+          cp target/release/jcode dist/jcode-linux-aarch64
+          chmod 755 dist/jcode-linux-aarch64
+          ./dist/jcode-linux-aarch64 --no-update --no-selfdev --version
+          tar -czf dist/jcode-linux-aarch64.tar.gz -C dist jcode-linux-aarch64
+          (cd dist && sha256sum jcode-linux-aarch64.tar.gz > jcode-linux-aarch64.tar.gz.sha256)
+          cat dist/jcode-linux-aarch64.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jcode-linux-aarch64
+          path: |
+            dist/jcode-linux-aarch64.tar.gz
+            dist/jcode-linux-aarch64.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Publish rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="termux-arm64-latest"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/jcode-linux-aarch64.tar.gz dist/jcode-linux-aarch64.tar.gz.sha256 --clobber
+          else
+            gh release create "$TAG" dist/jcode-linux-aarch64.tar.gz dist/jcode-linux-aarch64.tar.gz.sha256 \
+              --title "jcode Termux ARM64 (Responsive Mobile UI)" \
+              --notes "Responsive narrow/portrait TUI build for Termux aarch64." \
+              --target "$GITHUB_SHA"
+          fi

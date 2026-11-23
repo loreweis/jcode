@@ -384,7 +384,12 @@ impl UsageOverlay {
     }
 
     pub fn render(&self, frame: &mut Frame) {
-        let area = centered_rect(OVERLAY_PERCENT_X, OVERLAY_PERCENT_Y, frame.area());
+        let frame_area = frame.area();
+        let area = if frame_area.width < 76 && frame_area.height > 14 {
+            centered_rect(96, 94, frame_area)
+        } else {
+            centered_rect(OVERLAY_PERCENT_X, OVERLAY_PERCENT_Y, frame_area)
+        };
 
         let block = Block::default()
             .title(format!(" {} ", self.title))
@@ -419,10 +424,17 @@ impl UsageOverlay {
 
         self.render_header(frame, rows[0]);
 
-        let body = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(39), Constraint::Percentage(61)])
-            .split(rows[1]);
+        let body = if rows[1].width < 74 {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+                .split(rows[1])
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(39), Constraint::Percentage(61)])
+                .split(rows[1])
+        };
 
         self.render_item_list(frame, body[0]);
         self.render_detail_pane(frame, body[1]);
