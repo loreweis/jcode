@@ -78,16 +78,18 @@ fn render_single_line_system_notice(
     msg: &DisplayMessage,
     width: u16,
 ) -> Option<Vec<Line<'static>>> {
-    // Ordinary notices are always compact, not just plain one-line strings.
-    // Keep deliberately requested reports, command output and login prompts
-    // readable. Markdown or a newline alone is not a reason to expand a notice.
-    if matches!(
-        msg.title.as_deref(),
-        Some("Skills" | "Context" | "Support" | "Cloud transfer" | "Todo completion" | "Rewind")
-    ) || msg.content.starts_with("Shell command · ")
-        || msg.content.starts_with("Authentication Status:")
-        || (msg.content.contains('\n') && msg.content.contains("/cancel"))
-    {
+    // Only collapse routine background/auto notices into a single truncated row.
+    // User-requested slash command outputs (/config, /colors, /info, /keys, etc.)
+    // and multi-line system messages should wrap vertically and stay readable.
+    let is_routine_notice = msg.content.starts_with("[auto] ")
+        || msg.content.starts_with("Reload succeeded (")
+        || msg.content.starts_with("Reload complete.")
+        || msg.content.starts_with("Reload complete - continuing")
+        || msg.content.starts_with("📡 Network appears offline")
+        || msg.content.starts_with("✓ Retrying continuation...")
+        || msg.content.starts_with("⚠ File activity:")
+        || msg.content.starts_with("⚠️ File activity:");
+    if !is_routine_notice {
         return None;
     }
     if width == 0 {
